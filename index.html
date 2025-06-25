@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+  <meta charset="UTF-8">
+  <title>新澳12码统计</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <style>
+    html, body { margin:0; padding:0; background: #444; color:#fff; font-family:'PingFang SC','Microsoft YaHei',Arial,sans-serif; }
+    .container { max-width: 100vw; margin: 0 auto; padding: 4px 2vw 16px 2vw; }
+    h1 { text-align: center; font-size: 0.95rem; margin-bottom: 6px; }
+    textarea { width: 100%; min-height: 60px; border-radius: 4px; border: none; padding: 4px; font-size: 0.75rem; margin-bottom: 5px; background: #222; color: #fff; }
+    .btn-wrap { width:100%; display:flex; justify-content:center; gap:8px; }
+    button { min-width: 80px; max-width: 120px; padding: 5px 0; border: none; border-radius: 6px; background: linear-gradient(90deg, #1de982 0%, #ff3c3c 100%); color: #fff; font-size: 0.8rem; font-weight: bold; cursor: pointer; }
+    .user-count { text-align:center; font-size:0.75rem; margin:6px 0 0 0; color:#1de982; font-weight:bold; letter-spacing:0.05em; }
+    .user-row { margin: 8px 0 4px 0; border-bottom: 1px solid #666; padding-bottom: 2px; }
+    .username { font-size: 0.75rem; color: #fff; margin-bottom: 2px; font-weight: bold;}
+    .numbers { font-family: 'JetBrains Mono', 'Menlo', monospace; font-size: 0.7rem; color: #1de982; letter-spacing: 0.04em; margin-top: 2px; word-break: break-all; display: flex; flex-wrap: wrap; gap: 3px;}
+    .numbox { display: flex; flex-direction: column; align-items: center; margin-bottom: 1px;}
+    .num { font-size: 0.8em; font-weight: bold; background: #111; border-radius: 3px; padding: 0 4px; margin-bottom: 1px; }
+    .idx { font-size: 0.65em; color: #fffa; }
+    .stat-section {margin:12px 0 0 0; padding:8px 4px 6px 4px; background:#333; border-radius:6px;}
+    .stat-title {font-size:0.8rem; color:#1de982; margin-bottom:4px;}
+    .stat-num {color:#fff;font-size:0.7rem;font-weight:bold; background:#1de98222; border-radius:3px; padding:0 4px;}
+    .stat-detail {font-size:0.7rem; color:#fff; margin-bottom:2px;}
+    .inter-section {margin:14px 0 0 0; padding:8px 4px 8px 4px; background:#222; border-radius:6px;}
+    .inter-title {font-size:0.8rem; color:#ff3c3c; margin-bottom:4px;}
+    .inter-group {margin-bottom:4px;}
+    .inter-num {color:#fff;font-size:0.7rem;font-weight:bold; background:#ff3c3c22; border-radius:3px; padding:0 4px;}
+    .inter-detail {font-size:0.7rem; color:#fff; margin-bottom:2px;}
+    .user-selector-list { display: block; margin-bottom:6px; max-height:220px; overflow:auto; }
+    .user-selector-list label { display:block; font-size:0.7rem; white-space:nowrap; margin-bottom:2px; }
+    @media (max-width: 400px) {
+      .container { padding: 2px 1vw 10px 1vw; }
+      h1 { font-size: 0.8rem; }
+      .username { font-size: 0.7rem; }
+      .numbers { font-size: 0.6rem; }
+      .stat-title, .inter-title {font-size:0.7rem;}
+      .stat-num, .inter-num {font-size:0.6rem;}
+      .stat-detail, .inter-detail {font-size:0.6rem;}
+    }
+  </style>
+  <script src="https://unpkg.com/ml-pca"></script>
+  <script src="https://unpkg.com/ml-kmeans"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>新澳12码统计</h1>
+    <textarea id="input" placeholder="粘贴原始聊天内容"></textarea>
+    <div class="btn-wrap">
+      <button onclick="parseInput()" id="statBtn">统计</button>
+      <button onclick="startHistoryUserMode()" id="historyUserBtn">历史开奖用户</button>
+    </div>
+    <div style="text-align:center;margin:8px 0 8px 0;">
+      <label style="font-size:0.8rem;color:#1de982;">
+        出现
+        <input type="number" id="minAppearCount" value="2" min="1" max="12" style="width:38px;text-align:center;">
+        次及以上的数字
+      </label>
+    </div>
+    <div class="user-count" id="userCount"></div>
+    <div id="result"></div>
+    <div id="statResult"></div>
+    <div id="posStatResult"></div>
+    <div id="interResult"></div>
+    <div id="aiResult"></div>
+    <div id="diagResult"></div>
+  </div>
+<script>
+function extractNumbers(str) {
+  str = str.replace(/[^0-9.,，、;；\s-]/g, ' ');
+  str = str.replace(/[.,，、;；\s-]+/g, ',');
+  str = str.replace(/^,|,$/g, '');
+  let arr = str.split(',').filter(s => s.length > 0);
+  arr = arr.map(s => {
+    let n = parseInt(s, 10);
+    if (!isNaN(n) && n >= 1 && n <= 49) {
+      return n < 10 ? '0' + n : '' + n;
+    }
+    return null;
+  }).filter(s => s !== null);
+  return arr;
+}
+function extractName(line) {
+  let match = line.match(/https?:\/\/t\.me\/[^\s]+ (.+?)[,，]\s*\[/);
+  if (match) return match[1].trim();
+  match = line.match(/https?:\/\/t\.me\/[^\s]+ (.+)/);
+  if (match) return match[1].trim();
+  return line.trim();
+}
+function getAllUsernames(users) {
+  const set = new Set();
+  users.forEach(u => set.add(u.username));
+  return Array.from(set);
+}
+function renderUserSelector(usernames) {
+  const containerId = 'userSelectorContainer';
+  let container = document.getElementById(containerId);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = containerId;
+    container.style = 'margin:12px 0 8px 0;padding:8px 4px 8px 4px;background:#222;border-radius:6px;';
+    document.querySelector('.container').insertBefore(container, document.getElementById('result'));
+  }
+  let html = `
+    <div style="color:#1de982;font-size:0.8rem;margin-bottom:4px;">
+      选择用户名，统计这些用户在每组的共同数字：
+    </div>
+  `;
+  html += `<div style="display:flex;flex-direction:column;gap:4px 0;margin-bottom:6px;max-height:180px;overflow:auto;">`;
+  usernames.forEach(name => {
+    html += `<label style="font-size:0.7rem;white-space:nowrap;">
+      <input type="checkbox" class="userSelector" value="${name}"> ${name}
+      <span class="userNumShow" data-username="${name}" style="color:#1de982;margin-left:6px;"></span>
+    </label>`;
+  });
+  html += `</div>`;
+  html += `<button id="userSelectorBtn" style="padding:3px 12px;border-radius:4px;background:#1de982;color:#222;font-size:0.8rem;font-weight:bold;cursor:pointer;">统计共同数字</button>`;
+  html += `<button id="userSelectorSelectAllBtn" style="padding:3px 12px;border-radius:4px;background:#fff;color:#222;font-size:0.8rem;font-weight:bold;cursor:pointer;margin-left:8px;">全选/全不选</button>`;
+  html += `<div id="userSelectorCheckedTip" style="color:#1de982;font-size:0.8rem;margin-bottom:4px;"></div>`;
+  html += `<div id="userSelectorResult" style="margin-top:8px;"></div>`;
+  container.innerHTML = html;
+  document.getElementById('userSelectorBtn').onclick = showCommonNumbersForSelectedUsers;
+  document.getElementById('userSelectorSelectAllBtn').onclick = function() {
+    const cbs = document.querySelectorAll('.userSelector');
+    let allChecked = Array.from(cbs).every(cb => cb.checked);
+    cbs.forEach(cb => cb.checked = !allChecked);
+    updateCheckedTip();
+    updateUserNumShow();
+  };
+  const checkboxes = container.querySelectorAll('.userSelector');
+  checkboxes.forEach(cb => {
+    cb.addEventListener('change', () => {
+      updateCheckedTip();
+      updateUserNumShow();
+    });
+  });
+  updateCheckedTip();
+  updateUserNumShow();
+}
+function updateUserNumShow() {
+  if (!window.allUsers) return;
+  const checked = Array.from(document.querySelectorAll('.userSelector:checked')).map(cb => cb.value);
+  document.querySelectorAll('.userNumShow').forEach(span => {
+    const uname = span.getAttribute('data-username');
+    if (checked.includes(uname)) {
+      const user = window.allUsers.find(u => u.username === uname);
+      if (user) {
+        span.textContent = user.numbers.join(' ');
+      } else {
+        span.textContent = '';
+      }
+    } else {
+      span.textContent = '';
+    }
+  });
+}
+function normalizeName(name) {
+  return Array.from(
+    new Set(
+      name.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').toLowerCase().split('')
+    )
+  );
+}
+function isSetIncluded(a, b) {
+  return a.every(x => b.includes(x));
+}
+function autoCheckUserSelectorByHistory() {
+  const checkboxes = document.querySelectorAll('.userSelector');
+  if (!checkboxes.length) return;
+  let hisNames = historyUsernames || [];
+  let hisNorms = hisNames.map(normalizeName);
+  checkboxes.forEach(cb => {
+    let cbNorm = normalizeName(cb.value);
+    let checked = hisNorms.some(hn => isSetIncluded(hn, cbNorm) || isSetIncluded(cbNorm, hn));
+    cb.checked = checked;
+  });
+  updateCheckedTip();
+  updateUserNumShow();
+}
+function updateCheckedTip() {
+  const checked = document.querySelectorAll('.userSelector:checked');
+  let tipDiv = document.getElementById('userSelectorCheckedTip');
+  if (tipDiv) {
+    tipDiv.innerHTML = `已勾选 <span style="color:#fff">${checked.length}</span> 个用户`;
+  }
+}
+function showCommonNumbersForSelectedUsers() {
+  updateCheckedTip();
+  const checked = Array.from(document.querySelectorAll('.userSelector:checked')).map(e=>e.value.trim());
+  const resultDiv = document.getElementById('userSelectorResult');
+  const minAppearCount = parseInt(document.getElementById('minAppearCount')?.value, 10) || 2;
+  if (checked.length === 0) {
+    resultDiv.innerHTML = `<span style="color:#ff3c3c;">请至少选择一个用户名</span>`;
+    return;
+  }
+  if (!window.groupNumDetail) {
+    resultDiv.innerHTML = `<span style="color:#ff3c3c;">请先统计数据</span>`;
+    return;
+  }
+  let html = '';
+  let statNumsSet = new Set();
+  const groupTriplets = [
+    [1,2,3],
+    [2,3,4],
+    [3,4,5],
+    [4,5,6],
+    [5,6,7],
+    [7,8,9],
+    [8,9,10],
+    [10,11,12]
+  ];
+  for (let i = 0; i < groupTriplets.length; i++) {
+    let detailMap = window.groupNumDetail[i];
+    let numUserMap = {};
+    Object.entries(detailMap).forEach(([num, detailStr]) => {
+      checked.forEach(name => {
+        let reg = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\((第\\d+位)\\)');
+        let m = detailStr.match(reg);
+        if (m) {
+          if (!numUserMap[num]) numUserMap[num] = [];
+          numUserMap[num].push(`${name}(${m[1]})`);
+        }
+      });
+    });
+    let nums = Object.entries(numUserMap).filter(([num, arr]) => arr.length >= minAppearCount);
+    html += `<div style="margin-bottom:2px;"><span style="color:#1de982;">第${groupTriplets[i].join(' ')}位中出现${minAppearCount}次及以上的数字（${nums.length}个）</span></div>`;
+    if (nums.length) {
+      nums.forEach(([num, arr]) => {
+        statNumsSet.add(num);
+        html += `<div style="font-size:0.7rem;color:#fff;margin-bottom:1px;"><span style="background:#1de98222;color:#fff;font-weight:bold;border-radius:3px;padding:0 4px;">${num}</span>：${arr.join('，')}</div>`;
+      });
+    } else {
+      html += `<div style="color:#ff3c3c;font-size:0.7rem;">无</div>`;
+    }
+  }
+let statNumsArr = Array.from(statNumsSet).sort((a, b) => a - b);
+html += `<div style="margin-top:10px;color:#1de982;font-size:0.8rem;">所有选中用户的所有数字（去重）：</div>`;
+html += `<div style="color:#fff;font-size:0.9rem;margin-bottom:4px;">${statNumsArr.length ? statNumsArr.join(' ') : '无'}</div>`;
+let allNums = [];
+for(let i=1;i<=49;i++) allNums.push(i<10?'0'+i:''+i);
+let notAppear = allNums.filter(n => !statNumsArr.includes(n));
+html += `<div style="color:#ff3c3c;font-size:0.9rem;margin-bottom:4px;">未出现的数字：${notAppear.length ? notAppear.join(' ') : '无'}</div>`;
+resultDiv.innerHTML = html;
+}
+let isHistoryUserMode = false;
+let historyUsernames = [];
+function startHistoryUserMode() {
+  if (!window.allUsers || window.allUsers.length === 0) {
+    alert('请先输入最新数据并点击统计！');
+    return;
+  }
+  isHistoryUserMode = true;
+  document.getElementById('input').value = '';
+  document.getElementById('input').placeholder = '粘贴历史开奖内容，只提取中奖用户名';
+  document.getElementById('historyUserBtn').innerText = '完成提取';
+  document.getElementById('historyUserBtn').onclick = finishHistoryUserMode;
+  document.getElementById('input').focus();
+}
+function finishHistoryUserMode() {
+  const val = document.getElementById('input').value;
+  let lines = val.split('\n').map(l=>l.trim()).filter(l=>l.length>0);
+  let names = [];
+  for(let i=0; i<lines.length; i++) {
+    let m = lines[i].match(/^(.+?)[,，\s][\[\d]/);
+    if(m) {
+      names.push(m[1].trim());
+      continue;
+    }
+    let m2 = lines[i].match(/^(.+?)[,，]\s*新澳/);
+    if(m2) {
+      names.push(m2[1].trim());
+      continue;
+    }
+    let m3 = lines[i].match(/^(.+?)\s+✘\d+/);
+    if(m3) {
+      names.push(m3[1].trim());
+      continue;
+    }
+    if (lines[i].length > 0 && lines[i].length < 20 && !lines[i].match(/\d/)) {
+      names.push(lines[i].trim());
+      continue;
+    }
+  }
+  historyUsernames = Array.from(new Set(names));
+  autoCheckUserSelectorByHistory();
+  document.getElementById('input').placeholder = '粘贴原始聊天内容';
+  document.getElementById('historyUserBtn').innerText = '历史开奖用户';
+  document.getElementById('historyUserBtn').onclick = startHistoryUserMode;
+  isHistoryUserMode = false;
+}
+function diagonalCount(users) {
+  if (!users || users.length === 0) return '';
+  let N = 12;
+  let total = users.length;
+  let forwardNums = [];
+  let backwardNums = [];
+  for (let i = 0; i < total; i++) {
+    let user = users[i];
+    let idx = i % N;
+    if (user.numbers[idx]) forwardNums.push(user.numbers[idx]);
+  }
+  for (let i = 0; i < total; i++) {
+    let user = users[i];
+    let idx = N - 1 - (i % N);
+    if (user.numbers[idx]) backwardNums.push(user.numbers[idx]);
+  }
+  function countArr(arr) {
+    let map = {};
+    for (let i = 1; i <= 49; i++) map[i < 10 ? '0' + i : '' + i] = 0;
+    arr.forEach(n => { if (map[n] !== undefined) map[n]++; });
+    return map;
+  }
+  let forwardCount = countArr(forwardNums);
+  let backwardCount = countArr(backwardNums);
+  let html = `<div class="stat-section"><div class="stat-title">斜向正反循环取数统计</div>`;
+  html += `<div style="font-size:0.7rem;color:#1de982;">正向斜取（共${forwardNums.length}个）：</div>`;
+  html += `<div style="font-size:0.7rem;color:#fff;">`;
+  Object.entries(forwardCount).forEach(([num, cnt]) => {
+    if (cnt > 0) html += `<span style="margin-right:8px;">${num}(${cnt})</span>`;
+  });
+  html += `</div>`;
+  html += `<div style="font-size:0.7rem;color:#ff3c3c;margin-top:6px;">反向斜取（共${backwardNums.length}个）：</div>`;
+  html += `<div style="font-size:0.7rem;color:#fff;">`;
+  Object.entries(backwardCount).forEach(([num, cnt]) => {
+    if (cnt > 0) html += `<span style="margin-right:8px;">${num}(${cnt})</span>`;
+  });
+  html += `</div></div>`;
+  return html;
+}
+function parseInput() {
+  if(isHistoryUserMode) {
+    alert('请先完成历史开奖用户名提取！');
+    return;
+  }
+  const input = document.getElementById('input').value;
+  const resultDiv = document.getElementById('result');
+  const userCountDiv = document.getElementById('userCount');
+  const statDiv = document.getElementById('statResult');
+  const posStatDiv = document.getElementById('posStatResult');
+  const interDiv = document.getElementById('interResult');
+  resultDiv.innerHTML = '';
+  userCountDiv.innerHTML = '';
+  statDiv.innerHTML = '';
+  posStatDiv.innerHTML = '';
+  interDiv.innerHTML = '';
+  let lines = input.split('\n').map(l => l.trim());
+  let userBlocks = [];
+  let currBlock = [];
+  for (let line of lines) {
+    if (/^https?:\/\/t\.me\//.test(line)) {
+      if (currBlock.length) userBlocks.push(currBlock);
+      currBlock = [line];
+    } else {
+      currBlock.push(line);
+    }
+  }
+  if (currBlock.length) userBlocks.push(currBlock);
+  let users = [];
+  userBlocks.forEach(blockLines => {
+    blockLines = blockLines.filter(l => l.length > 0);
+    let username = '';
+    let numbers = [];
+    for (let i = 0; i < blockLines.length; i++) {
+      if (/^https?:\/\/t\.me\//.test(blockLines[i])) {
+        username = extractName(blockLines[i]);
+        break;
+      }
+    }
+    let codeStr = '';
+    for (let i = 0; i < blockLines.length; i++) {
+      let l = blockLines[i];
+      let m1 = l.match(/12[码马][:：]?\s*([\d.,，、;；\s-]+)/i);
+      if (m1) { codeStr = m1[1]; break; }
+      let m2 = l.match(/(?:新澳|新奥)?\d{2,3}期\s*12[码马][:：]?\s*([\d.,，、;；\s-]+)/i);
+      if (m2) { codeStr = m2[1]; break; }
+      let m3 = l.match(/\d{2,3}(?:新澳|新奥)[^\d]*([\d.,，、;；\s-]+)/i);
+      if (m3) { codeStr = m3[1]; break; }
+      let m4 = l.match(/12[码马][:：]?\s*([\d.,，、;；\s-]+)/i);
+      if (m4) { codeStr = m4[1]; break; }
+      let m5 = l.match(/(?:新澳|新奥)\d{2,3}期\s*([\d.,，、;；\s-]+)/i);
+      if (m5) { codeStr = m5[1]; break; }
+      let m6 = l.match(/\d{2,3}期新澳[:：]?\s*([\d.,，、;；\s-]+)/i);
+      if (m6) { codeStr = m6[1]; break; }
+    }
+    if (!codeStr) {
+      for (let i = 0; i < blockLines.length - 1; i++) {
+        if (/新[澳奥]?\d{2,3}期/.test(blockLines[i]) && /^[\d\s.,，、;；-]+$/.test(blockLines[i + 1])) {
+          codeStr = blockLines[i + 1];
+          break;
+        }
+      }
+    }
+    if (!codeStr) {
+      for (let i = 1; i < blockLines.length; i++) {
+        if (/[\d]{2}[\s.,，、;；-][\d]{2}/.test(blockLines[i])) {
+          codeStr = blockLines[i];
+          break;
+        }
+      }
+    }
+    numbers = extractNumbers(codeStr).slice(0, 12);
+    if (username && numbers.length > 0) {
+      users.push({ username, numbers });
+    }
+  });
+  userCountDiv.innerHTML = `共识别到 <span style="color:#fff">${users.length}</span> 个用户`;
+  if (users.length === 0) {
+    resultDiv.innerHTML = '<div style="color:#fff;opacity:0.7;text-align:center;">未识别到有效数据</div>';
+    statDiv.innerHTML = '';
+    posStatDiv.innerHTML = '';
+    interDiv.innerHTML = '';
+    let selDiv = document.getElementById('userSelectorContainer');
+    if (selDiv) selDiv.innerHTML = '';
+    document.getElementById('aiResult').innerHTML = '';
+    document.getElementById('diagResult').innerHTML = '';
+    return;
+  }
+  users.forEach(user => {
+    let posStr = user.numbers.map((num, idx) =>
+      `<span class="numbox"><span class="num">${num}</span><span class="idx">第${idx+1}位</span></span>`
+    ).join('');
+    resultDiv.innerHTML += `
+      <div class="user-row">
+        <div class="username">${user.username}</div>
+        <div class="numbers">${posStr}</div>
+      </div>
+    `;
+  });
+  (function(){
+    let zeroCountMap = {};
+    for(let i=1;i<=49;i++) zeroCountMap[i<10?'0'+i:''+i]=0;
+    for(let pos=0;pos<12;pos++) {
+      let countMap = {};
+      for(let i=1;i<=49;i++) countMap[i<10?'0'+i:''+i]=0;
+      users.forEach(user=>{
+        let n = user.numbers[pos];
+        if(n) countMap[n]++;
+      });
+      Object.entries(countMap).forEach(([num,cnt])=>{
+        if(cnt===0) zeroCountMap[num]++;
+      });
+    }
+    let group = {};
+    Object.entries(zeroCountMap).forEach(([num, cnt])=>{
+      if(!group[cnt]) group[cnt]=[];
+      group[cnt].push(num);
+    });
+    let keys = Object.keys(group).map(Number).sort((a,b)=>b-a);
+    let html = `<div class="stat-section"><div class="stat-title">每个数字在12个位置出现0次的次数统计</div>`;
+    keys.forEach(cnt=>{
+      let arr = group[cnt].sort((a,b)=>a-b);
+      html += `〖${cnt}次〗${arr.join(' ')}（共计${arr.length}个）<br>`;
+    });
+    html += `</div>`;
+    let outDiv = document.getElementById('statResult');
+    outDiv.innerHTML = html + outDiv.innerHTML;
+  })();
+  const minAppearCount = parseInt(document.getElementById('minAppearCount')?.value, 10) || 2;
+  let groupNums = [];
+  let groupNumDetail = [];
+  let statHtml = `
+    <div class="stat-section">
+      <div class="stat-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>指定三位组合中出现${minAppearCount}次及以上的数字</span>
+        <button onclick="toggleStatDetail()" id="toggleStatDetailBtn" style="padding:1px 8px;font-size:0.7rem;border-radius:3px;background:#1de982;color:#222;cursor:pointer;">显示</button>
+      </div>
+      <div id="statDetailContent" style="display:none;">
+  `;
+  const groupTriplets = [
+    [1,2,3],
+    [2,3,4],
+    [3,4,5],
+    [4,5,6],
+    [5,6,7],
+    [7,8,9],
+    [8,9,10],
+    [10,11,12]
+  ];
+  for(let gi=0; gi<groupTriplets.length; gi++) {
+    const triplet = groupTriplets[gi];
+    let posNums = {};
+    users.forEach(user => {
+      triplet.forEach(pos => {
+        if(user.numbers[pos-1]) {
+          if(!posNums[user.numbers[pos-1]]) posNums[user.numbers[pos-1]] = [];
+          posNums[user.numbers[pos-1]].push({user:user.username, pos:pos});
+        }
+      });
+    });
+    let sameNums = Object.entries(posNums).filter(([num, arr])=>arr.length>=minAppearCount);
+    groupNums.push(new Set(sameNums.map(([num])=>num)));
+    let detailMap = {};
+    sameNums.forEach(([num, arr]) => {
+      detailMap[num] = arr.map(item=>`${item.user}(第${item.pos}位)`).join('，');
+    });
+    groupNumDetail.push(detailMap);
+    statHtml += `<div style="margin-bottom:4px;"><span style="color:#1de982;">第${triplet.join(' ')}位中出现${minAppearCount}次及以上的数字（${sameNums.length}个）</span></div>`;
+    if(sameNums.length === 0) {
+      statHtml += `<div style="color:#aaa;font-size:0.7rem;">无</div>`;
+    } else {
+      sameNums.forEach(([num, arr]) => {
+        let detail = arr.map(item=>`${item.user}(第${item.pos}位)`).join('，');
+        statHtml += `<div class="stat-detail"><span class="stat-num">${num}</span>：${detail}</div>`;
+      });
+    }
+  }
+  statHtml += `</div></div>`;
+  let userHitMap = {};
+  for(let groupIdx=0; groupIdx<groupNumDetail.length; groupIdx++) {
+    let detailMap = groupNumDetail[groupIdx];
+    Object.entries(detailMap).forEach(([num, detailStr]) => {
+      let userMatches = detailStr.matchAll(/([\u4e00-\u9fa5A-Za-z0-9_❤️‍🔥\-·\s\(\)]+?)\(/g);
+      for(let match of userMatches) {
+        let uname = match[1].trim();
+        if(!userHitMap[uname]) userHitMap[uname] = {};
+        if(!userHitMap[uname][num]) userHitMap[uname][num] = [];
+        userHitMap[uname][num].push(groupIdx+1);
+      }
+    });
+  }
+  let userHitHtml = `
+    <div class="stat-section">
+      <div class="stat-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>用户命中统计</span>
+        <button onclick="toggleUserHit()" id="toggleUserHitBtn" style="padding:1px 8px;font-size:0.7rem;border-radius:3px;background:#1de982;color:#222;cursor:pointer;">显示</button>
+      </div>
+      <div id="userHitContent" style="display:none;">
+  `;
+  let userHitArr = Object.entries(userHitMap).map(([uname, nums]) => {
+    let total = Object.values(nums).reduce((a,b)=>a+b.length,0);
+    return {uname, nums, total};
+  });
+  userHitArr.sort((a,b)=>b.total-a.total);
+  userHitArr.forEach(user=>{
+    let numsStr = Object.entries(user.nums).map(([num, groups])=>{
+      return `<span class="stat-num">${num}</span>(第${groups.join('、')}组)`;
+    }).join('， ');
+    userHitHtml += `<div class="stat-detail"><span style="color:#1de982;font-weight:bold;">${user.uname}</span>：${numsStr} <span style="color:#ff3c3c;">共${user.total}次</span></div>`;
+  });
+  userHitHtml += `</div></div>`;
+  statDiv.innerHTML += statHtml + userHitHtml;
+  let posStatHtml = '';
+  for (let pos = 0; pos < 12; pos++) {
+    let countMap = {};
+    for (let i = 1; i <= 49; i++) {
+      let n = i < 10 ? '0' + i : '' + i;
+      countMap[n] = 0;
+    }
+    users.forEach(user => {
+      let n = user.numbers[pos];
+      if (n) countMap[n]++;
+    });
+    let group = {};
+    Object.entries(countMap).forEach(([num, cnt]) => {
+      if (!group[cnt]) group[cnt] = [];
+      group[cnt].push(num);
+    });
+    let keys = Object.keys(group).map(Number).sort((a, b) => b - a);
+    posStatHtml += `<div class="stat-section"><div class="stat-title">第${pos + 1}位</div>`;
+    keys.forEach(cnt => {
+      let arr = group[cnt].sort((a, b) => a - b);
+      posStatHtml += `〖${cnt}次〗${arr.join(' ')}（共计${arr.length}个）<br>`;
+    });
+    posStatHtml += `</div>`;
+  }
+  posStatDiv.innerHTML = posStatHtml;
+  let numGroupMap = {};
+  groupNums.forEach((set, idx) => {
+    set.forEach(num => {
+      if(!numGroupMap[num]) numGroupMap[num] = [];
+      numGroupMap[num].push(idx+1);
+    });
+  });
+  let groupCountMap = {};
+  Object.entries(numGroupMap).forEach(([num, arr]) => {
+    let count = arr.length;
+    if(count>=2) {
+      if(!groupCountMap[count]) groupCountMap[count] = [];
+      groupCountMap[count].push({num, groups: arr});
+    }
+  });
+  let counts = Object.keys(groupCountMap).map(Number).sort((a,b)=>b-a);
+  let interHtml = `<div class="inter-section"><div class="inter-title">8组交集分组统计</div>`;
+  if(counts.length === 0) {
+    interHtml += `<div style="color:#aaa;font-size:0.7rem;">无</div>`;
+  } else {
+    counts.forEach(cnt => {
+      let arr = groupCountMap[cnt];
+      let nums = arr.map(x=>x.num).sort((a,b)=>a-b);
+      interHtml += `<div class="inter-group">〖${cnt}次〗${nums.join(' ')}（共计${nums.length}个）</div>`;
+    });
+  }
+  interHtml += `<div style="margin-top:8px;font-size:0.7rem;color:#1de982;">详细分布：</div>`;
+  counts.forEach(cnt => {
+    let arr = groupCountMap[cnt];
+    arr.forEach(x=>{
+      interHtml += `<div class="inter-detail">${x.num}：出现在第${x.groups.join('、')}组</div>`;
+    });
+  });
+  interHtml += `</div>`;
+  interDiv.innerHTML = interHtml;
+  let groupCommonNums = [];
+  for (let i = 0; i < groupNumDetail.length - 1; i++) {
+    let set1 = new Set(Object.keys(groupNumDetail[i]));
+    let set2 = new Set(Object.keys(groupNumDetail[i + 1]));
+    let common = [...set1].filter(x => set2.has(x));
+    groupCommonNums.push(common);
+  }
+  let groupCommonHtml = `<div class="stat-section"><div class="stat-title">每对相邻组共同出现的数字</div>`;
+  for (let i = 0; i < groupCommonNums.length; i++) {
+    let nums = groupCommonNums[i].sort((a, b) => a - b);
+    groupCommonHtml += `第${i+1}组-第${i+2}组：${nums.length ? nums.join(' ') : '无'}<br>`;
+  }
+  groupCommonHtml += `</div>`;
+  statDiv.innerHTML += groupCommonHtml;
+  let numAppearCount = {};
+  groupCommonNums.forEach(arr => {
+    arr.forEach(num => {
+      if (!numAppearCount[num]) numAppearCount[num] = 0;
+      numAppearCount[num]++;
+    });
+  });
+  let appearGroup = {};
+  Object.entries(numAppearCount).forEach(([num, cnt]) => {
+    if (!appearGroup[cnt]) appearGroup[cnt] = [];
+    appearGroup[cnt].push(num);
+  });
+  let appearKeys = Object.keys(appearGroup).map(Number).sort((a, b) => b - a);
+  let appearHtml = `<div class="stat-section"><div class="stat-title">每对相邻组共同数字出现次数统计</div>`;
+  appearKeys.forEach(cnt => {
+    let arr = appearGroup[cnt].sort((a, b) => a - b);
+    appearHtml += `〖${cnt}次〗${arr.join(' ')}（共计${arr.length}个）<br>`;
+  });
+  appearHtml += `</div>`;
+  statDiv.innerHTML += appearHtml;
+  let allCommonNums = new Set();
+  groupCommonNums.forEach(arr => arr.forEach(num => allCommonNums.add(num)));
+  let numHitUserSet = {};
+  for (let user of userHitArr) {
+    for (let num in user.nums) {
+      if (!allCommonNums.has(num)) continue;
+      if (!numHitUserSet[num]) numHitUserSet[num] = new Set();
+      numHitUserSet[num].add(user.uname);
+    }
+  }
+  for (let i = 1; i <= 49; i++) {
+    let n = i < 10 ? '0' + i : '' + i;
+    if (!numHitUserSet[n]) numHitUserSet[n] = new Set();
+  }
+  let countGroup = {};
+  Object.entries(numHitUserSet).forEach(([num, set]) => {
+    let cnt = set.size;
+    if (!countGroup[cnt]) countGroup[cnt] = [];
+    countGroup[cnt].push(num);
+  });
+  let countKeys = Object.keys(countGroup).map(Number).sort((a, b) => b - a);
+  let numStatHtml = `<div class="stat-section"><div class="stat-title">命中数字出现用户数统计（仅相邻组共同出现，用户名去重）</div>`;
+  countKeys.forEach(cnt => {
+    let arr = countGroup[cnt].sort((a, b) => a - b);
+    numStatHtml += `〖${cnt}人〗${arr.join(' ')}（共计${arr.length}个）<br>`;
+  });
+  numStatHtml += `</div>`;
+  statDiv.innerHTML += numStatHtml;
+  let coverResult = {};
+  for (let N = 12; N >= 8; N--) {
+    coverResult[N] = [];
+    for (let i = 1; i <= 49; i++) {
+      let n = i < 10 ? '0' + i : '' + i;
+      let posSet = new Set();
+      users.forEach(user => {
+        user.numbers.forEach((num, idx) => {
+          if (num === n && idx < N) posSet.add(idx + 1);
+        });
+      });
+      let allCovered = true;
+      for (let pos = 1; pos <= N; pos++) {
+        if (!posSet.has(pos)) {
+          allCovered = false;
+          break;
+        }
+      }
+      if (allCovered) {
+        coverResult[N].push(n);
+      }
+    }
+  }
+  let coverHtml = `<div class="stat-section"><div class="stat-title">覆盖前N位的数字统计</div>`;
+  for (let N = 12; N >= 8; N--) {
+    coverHtml += `<div style="margin-bottom:2px;"><span style="color:#1de982;">覆盖前${N}位：</span>`;
+    if (coverResult[N].length) {
+      coverHtml += `<span style="color:#fff;">${coverResult[N].join(' ')}</span>`;
+    } else {
+      coverHtml += `<span style="color:#ff3c3c;">无</span>`;
+    }
+    coverHtml += `</div>`;
+  }
+  coverHtml += `</div>`;
+  statDiv.innerHTML += coverHtml;
+  window.groupNumDetail = groupNumDetail;
+  const allNames = getAllUsernames(users);
+  renderUserSelector(allNames);
+  window.allUsers = users;
+  (function aiDetect(users) {
+    const aiDiv = document.getElementById('aiResult');
+    if (!users || users.length < 5) {
+      aiDiv.innerHTML = '';
+      return;
+    }
+    let X = users.map(u => u.numbers.map(Number));
+    let features = X.map(nums => {
+      let mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+      let variance = nums.reduce((a, b) => a + (b - mean) ** 2, 0) / nums.length;
+      let span = Math.max(...nums) - Math.min(...nums);
+      return nums.concat([mean, variance, span]);
+    });
+    let pca = new ML.PCA(features, {center: true, scale: true});
+    let X_pca = pca.predict(features, {nComponents: 2});
+    let kmeans = new ML.KMeans();
+    let clusters = kmeans.cluster(X_pca, 3);
+    function euclidean(a, b) {
+      return Math.sqrt(a.reduce((sum, v, i) => sum + (v - b[i]) ** 2, 0));
+    }
+    let distances = X_pca.map((point, i) => {
+      let center = kmeans.centroids[clusters[i]];
+      return euclidean(point, center.centroid);
+    });
+    let sorted = distances.slice().sort((a, b) => b - a);
+    let threshold = sorted[Math.floor(users.length * 0.1)];
+    let outliers = users.map((u, i) => ({...u, score: distances[i]}))
+      .filter((u, i) => distances[i] >= threshold)
+      .sort((a, b) => b.score - a.score);
+    let aiHtml = `<div class="stat-section"><div class="stat-title" style="color:#ff3c3c;">AI检测异常用户（Top 10% 离群）</div>`;
+    if (outliers.length === 0) {
+      aiHtml += `<div style="color:#aaa;font-size:0.7rem;">无明显异常</div>`;
+    } else {
+      outliers.forEach(u => {
+        aiHtml += `<div class="stat-detail"><span style="color:#ff3c3c;">${u.username}</span> <span style="color:#1de982;">异常分数：${u.score.toFixed(2)}</span></div>`;
+      });
+    }
+    aiHtml += `<div style="margin-top:8px;font-size:0.7rem;color:#1de982;">分数越高越异常，仅供参考</div></div>`;
+    aiDiv.innerHTML = aiHtml;
+  })(users);
+
+  // 斜向正反循环取数统计
+  let diagHtml = diagonalCount(users);
+  let diagDiv = document.getElementById('diagResult');
+  if (diagDiv) {
+    diagDiv.innerHTML = diagHtml;
+  }
+}
+function toggleStatDetail() {
+  const content = document.getElementById('statDetailContent');
+  const btn = document.getElementById('toggleStatDetailBtn');
+  if (content.style.display === 'none') {
+    content.style.display = '';
+    btn.innerText = '隐藏';
+  } else {
+    content.style.display = 'none';
+    btn.innerText = '显示';
+  }
+}
+function toggleUserHit() {
+  const content = document.getElementById('userHitContent');
+  const btn = document.getElementById('toggleUserHitBtn');
+  if (content.style.display === 'none') {
+    content.style.display = '';
+    btn.innerText = '隐藏';
+  } else {
+    content.style.display = 'none';
+    btn.innerText = '显示';
+  }
+}
+</script>
+</body>
+</html>
